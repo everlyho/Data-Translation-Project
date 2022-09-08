@@ -1,0 +1,213 @@
+---
+title: "Data Transalation: Visitors in July/2020 in King County"
+author: "Everly Ho"
+date: "5/14/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, include=FALSE}
+install.packages("tigris")
+install.packages("sqldf")
+install.packages("gsubfn")
+install.packages("proto")
+install.packages("RSQLite")
+install.packages("ggplot2")
+install.packages("rmarkdown")
+library(tigris)
+library(sqldf)
+library(ggplot2)
+library(rmarkdown)
+
+setwd(dirname(rstudioapi::getSourceEditorContext()$path))
+
+# Read in the revised origin data
+dailyvisits <- readRDS('king_dailyvisits.Rdata')
+
+theme_color <- c("#ef8498", "#00a4ec", "#3acec7", "#455abd", "#ffc83d", "#5c6ac4", "#bf9dee", "#ff8d4f","#4fc186", "#638fd4")
+
+#5 CHART ONE STORY
+  #1: BAR CHART ABOUT naics SUM VISIT IN JULY/2020 DESC ORDER
+  #2: LINE CHART ABOUT VISIT BY DATE, 
+        #1 LINE naics WITH THE MOST VISIT
+        #2 AVG VIST
+        #3 LINE naics WITH THE LEAST VISIT
+  #3: naics WITH THE MOST VISIT, PIE (DONUT) CHART ABOUT BRAND SUM VISIT IN JULY/2020
+        #NOTE: brands null mean "Smaller brands"
+  #4: naics WITH THE MOST VISIT, BRAND LINE CHART ABOUT VISIT BY DATE
+  #5: BRAND WITH THE MOST VISIT, BRAND LINE CHART ABOUT VISIT BY DATE
+
+  
+#chart 1
+monthly_visit <- sqldf('SELECT naics_code, naics_title, SUM(visits_by_day) AS sum_visit 
+            FROM dailyvisits 
+            WHERE naics_title IS NOT NULL
+            GROUP BY naics_code, naics_title 
+            ORDER BY 3 desc')
+
+
+data1 <- sqldf('SELECT naics_title, sum_visit FROM monthly_visit LIMIT 10')
+
+data1$fraction = data1$sum_visit / sum(data1$sum_visit)
+data1$ymax = cumsum(data1$fraction)
+data1$ymin = c(0, head(data1$ymax, n=-1))
+data1$labelPosition <- (data1$ymax + data1$ymin) / 2
+data1$label <- data1$sum_visit
+
+chart1 <- ggplot(data1, aes(ymax=ymax, ymin=ymin, xmax=4, xmin=3, fill=naics_title)) +
+ # geom_bar(stat = "identity", color = "white") +
+  geom_rect() +
+  geom_label(x=3.5, aes(y=labelPosition, label=label), size=4, color = "#333333") +
+  scale_fill_manual(values = theme_color) +
+  coord_polar(theta="y") + 
+  xlim(c(2, 4)) +
+  theme_void() +
+  labs(fill = "Industries")  +
+  theme(legend.title = element_text(colour="#333333", size=12, face="bold"))
+
+
+#chart 2
+avg_daily_visit <- sqldf('SELECT date, "Average visit" as key, ROUND(AVG(visits_by_day),0) AS daily_visit 
+            FROM dailyvisits 
+            WHERE naics_title IS NOT NULL
+            GROUP BY date
+            ORDER BY 1')
+
+most_naics_daily_visit <- sqldf('SELECT date, naics_title as key, SUM(visits_by_day) AS daily_visit 
+                                FROM dailyvisits 
+                                WHERE naics_code in (SELECT naics_code FROM monthly_visit LIMIT 3)
+                                GROUP BY date, naics_code, naics_title
+                                ORDER BY 1')
+
+data2 <- sqldf('SELECT * FROM most_naics_daily_visit
+                UNION
+                SELECT * FROM avg_daily_visit')
+
+chart2 <- ggplot(data2, aes(x=date, y=daily_visit, group=key, color=key)) +
+  geom_line(size=0.5) +
+  geom_point(size=1) +
+  scale_color_discrete(name = "Industries") +
+  xlab("Date") +
+  ylab("Visit") +
+  theme_linedraw() +
+  theme_light() +
+  scale_x_date(breaks = data2$date) + 
+  theme(axis.text.x = element_text(angle = 90)) +
+  theme(legend.position="bottom") +
+  theme(legend.title = element_text(colour="#333333", size=12, face="bold")) +
+  theme(legend.text = element_text(colour="#333333", size=6))
+
+
+#chart 3
+data3 <- sqldf('SELECT CASE WHEN brands="" THEN "Other smaller brands" ELSE brands END AS brands,
+                              SUM(visits_by_day) AS sum_visit 
+                              FROM dailyvisits 
+                              WHERE naics_code IN (SELECT naics_code FROM monthly_visit LIMIT 1)
+                              GROUP BY 1
+                              ORDER BY 2 desc')
+
+
+data3$fraction = data3$sum_visit / sum(data3$sum_visit)
+data3$ymax = cumsum(data3$fraction)
+data3$ymin = c(0, head(data3$ymax, n=-1))
+data3$labelPosition <- (data3$ymax + data3$ymin) / 2
+data3$label <- data3$sum_visit
+
+chart3 <- ggplot(data3, aes(ymax=ymax, ymin=ymin, xmax=4, xmin=3, fill=brands)) +
+  # geom_bar(stat = "identity", color = "white") +
+  geom_rect() +
+  geom_label(x=3.5, aes(y=labelPosition, label=label), size=4, color = "#333333") +
+  scale_fill_brewer(palette=2) +
+  coord_polar(theta="y") + 
+  xlim(c(2, 4)) +
+  theme_void() +
+  labs(fill = "Brands") +
+  theme(plot.title = element_text(face ="bold", color="#333333", size=12)) +
+  theme(legend.title = element_text(colour="#333333", size=12, face="bold"))
+
+
+#chart 4
+data4 <- sqldf('SELECT date, CASE WHEN brands="" THEN "Other smaller brands" ELSE brands END AS key, visits_by_day 
+                FROM dailyvisits 
+                WHERE naics_code IN (SELECT naics_code FROM monthly_visit LIMIT 1)
+                ORDER BY date')
+
+chart4 <- ggplot(data4, aes(x=date, y=visits_by_day, group=key, color=key)) +
+  geom_line(size=0.5) +
+  geom_point(size=1) +
+  scale_color_discrete(name = "Brands") +
+  xlab("Date") +
+  ylab("Visit") +
+  theme_linedraw() +
+  theme_light() +
+  scale_x_date(breaks = data4$date) + 
+  theme(axis.text.x = element_text(angle = 90)) +
+  theme(legend.position="bottom") +
+  theme(legend.title = element_text(colour="#333333", size=12, face="bold"))
+
+#chart 5
+data5 <- sqldf('SELECT date, SUM(visits_by_day) AS sum_visit 
+                FROM dailyvisits 
+                WHERE naics_title IS NOT NULL
+                GROUP BY date')
+
+chart5 <- ggplot(data5, aes(x=date, y=sum_visit)) +
+  geom_line(size=0.5, color="#ff8d4f") +
+  geom_point(size=1, color="#ff8d4f") +
+  xlab("Date") +
+  ylab("Visit") +
+  theme_linedraw() +
+  theme_light() + 
+  scale_x_date(breaks = data5$date) + 
+  theme(axis.text.x = element_text(angle = 90))
+
+top_naics_title <- monthly_visit$naics_title[1]
+```
+
+## Introduction
+
+After examining **king_dailyvisits** data, there are some interesting point about number of visit changing daily. These interesting point are visualized as follows:
+
+
+## Total visit daily in July/2020
+
+```{r chart1, echo=FALSE, out.width="80%"}
+chart5
+```
+
+As we can see, total visit drop to its lowest at the weekend and tends to increase gradually towards the end of the month.
+
+## Top 10 Industries have the most visit in July/2020
+
+```{r chart2, echo=FALSE, out.width="80%"}
+chart1
+```
+
+The chart show Industries with the most visit, these are essential services Like accommodation, food and health.
+
+## Top 3 Industries and average daily visit data in July/2020
+
+```{r chart3, echo=FALSE, out.width="80%"}
+chart2
+```
+
+Like total visit data, number of visits of top 3 Industries tends to be in its peak at Friday and drop to its lowest at the weekend. But, Park's visit data is different, its highest is in the weekend and tends to be lowest at Friday.
+
+## Total visit of `r top_naics_title` brands in July/2020
+
+```{r chart4, echo=FALSE, out.width="80%"}
+chart3
+```
+
+In the most visit industry data, `r top_naics_title`, We can see that most people support smaller brands.
+
+## Daily visit of `r top_naics_title` brands in July/2020
+
+```{r chart5, echo=FALSE, out.width="80%"}
+chart4
+```
+
+Number of visits of big brands is pretty stable, unlike smaller brands which difference between the highest and the lowest is too large.
